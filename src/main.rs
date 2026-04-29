@@ -17,6 +17,8 @@ use tracing_subscriber::FmtSubscriber;
 
 use stopwatch::Args;
 use tokio::{fs, signal};
+
+use crate::stopwatch::get_time;
 async fn main_loop(current_stopwatch: Arc<stopwatch::Stopwatch>) {
     let mut stdout = stdout();
     let _ = stdout.execute(cursor::Hide);
@@ -60,31 +62,28 @@ fn setup_tracing() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
-fn get_file_name() -> String {
-    let filename_suffix = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    format!("stopwatch_{filename_suffix}.log")
+fn get_filename(format_str: &str) -> String {
+    Local::now().format(format_str).to_string()
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let given_config = tokio::task::spawn_blocking(config::get_config)
         .await
         .unwrap();
     let args = Args::parse();
-    let time = args
-        .time
-        .map(|t| {
-            t.parse::<humantime::Duration>()
-                .expect("Invalid time format!")
-        })
-        .map(|t| -> Duration { t.into() })
-        .unwrap_or(Duration::from_secs(0));
+    let time = match &given_config.logging_options {
+        Some(opt) => Some(get_time(args, &opt.path, &opt.filename_format).await?),
+        None => None,
+    }
+    .unwrap_or(Duration::from_secs(0));
     setup_tracing();
-    let filename_to_log = given_config
-        .path_to_log_time
-        .map(|p| p.join(get_file_name()));
+    let filepath_to_log_to = given_config
+        .logging_options
+        .map(|opt| opt.path.join(get_filename(&opt.filename_format)));
     let current_stopwatch = Arc::new(stopwatch::Stopwatch::start_from(Instant::now() - time));
     tokio::spawn(main_loop(current_stopwatch.clone()));
     signal::ctrl_c().await.unwrap();
-    cleanup(current_stopwatch.clone(), filename_to_log).await;
+    cleanup(current_stopwatch.clone(), filepath_to_log_to).await;
+    Ok(())
 }
