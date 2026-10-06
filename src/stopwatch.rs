@@ -40,6 +40,8 @@ pub async fn get_time_from_file(filepath: &Path) -> Result<std::time::Duration, 
 #[derive(Debug, Subcommand)]
 pub enum Mode {
     Start {
+        /// Starting duration in human-readable format (e.g., "1h 30m 10s", "10m")
+        /// Uses rust humantime to parse
         #[arg(long, short)]
         time: Option<String>,
     },
