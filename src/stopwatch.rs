@@ -2,11 +2,15 @@ use anyhow::Context;
 use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
 use humantime::Duration;
+use std::collections::HashMap;
 use std::path::Path;
+use std::process::Stdio;
 use std::str::FromStr;
 use std::{path::PathBuf, time};
 use thiserror::Error;
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 use tracing::warn;
 pub struct Stopwatch {
     starting_time: time::Instant,
@@ -142,4 +146,44 @@ pub async fn get_time(
             }
         }
     }
+}
+
+pub async fn choose_time_by_fzf<'a>(choices: Vec<PathBuf>) -> anyhow::Result<PathBuf> {
+    let filenames_to_paths: HashMap<String, PathBuf> = choices
+        .into_iter()
+        .map(|c| {
+            (
+                c.file_name().unwrap().to_string_lossy().to_string(),
+                c.clone(),
+            )
+        })
+        .collect();
+    let mut fzf_process = Command::new("fzf")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("Failed to start fzf. Are you sure it is installed?")?;
+    let choice: String;
+    {
+        let mut stdin = fzf_process
+            .stdin
+            .take()
+            .expect("Failed to open stdin to fzf");
+        for filename in filenames_to_paths.keys() {
+            stdin
+                .write_all(filename.as_bytes())
+                .await
+                .context(format!("Failed to pipe {} to fzf", filename))?;
+        }
+        let output = fzf_process
+            .wait_with_output()
+            .await
+            .context("Failed to get output of fzf")?;
+        let output_bytes = output.stdout;
+        choice = String::from_utf8_lossy(&output_bytes).into_owned();
+    }
+    let corrosponding_path = filenames_to_paths
+        .get(&choice)
+        .context("Output doesn't match a path")?;
+    Ok(corrosponding_path.clone())
 }
